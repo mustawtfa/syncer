@@ -1,76 +1,70 @@
 import { MODELS_JSON } from '@cloudflare/kv-asset-handler';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/models';
-const OPENAI_API = 'https://api.openai.com/v1/chat/completions';
+const COST_LIMIT     = 2.0;   // $ – toplam maliyet üst sınırı
 
-async function fetchRemoteModels(env) {
-  const res = await fetch(OPENROUTER_URL, {
-    headers: {
-      Authorization: env.OPENROUTER_KEY
-    }
-  });
-  return res.json();
-}
+/* ---------- Yardımcılar ---------------------------------------------- */
+// Serinin adını, model ismindeki ilk ":" öncesinden alır
+const seriesName   = name => name.split(':')[0].trim();
 
-function categorize(modelId) {
-  if (modelId.startsWith('google/')) return 'Gemini';
-  if (modelId.startsWith('openai/')) return 'ChatGPT';
-  if (modelId.startsWith('anthropic/')) return 'Anthropic';
-  return 'Other';
-}
+// Varyant adını, ilk ":" sonrasından alır
+const variantName  = name => {
+  const parts = name.split(':');
+  return parts.length > 1 ? parts.slice(1).join(':').trim() : name.trim();
+};
 
-async function genDescription(id, env) {
-  const prompt = `Give a short and long description for the model ${id}.`;
-  const res = await fetch(OPENAI_API, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': env.OPENAI_KEY
-    },
-    body: JSON.stringify({
-      model: 'gpt-4-turbo',
-      messages: [{ role: 'user', content: prompt }]
-    })
+// Text vs. multimodal
+const modality = pricing => (+pricing.image > 0 ? 'multimodal' : 'text');
+
+// pricing objesindeki TÜM sayısal alanları topla
+const priceTotal = pricing =>
+  Object.values(pricing).reduce((sum, v) => sum + (+v || 0), 0);
+
+/* ---------- OpenRouter’dan modelleri çek ----------------------------- */
+const fetchRemoteModels = async env => {
+  const res  = await fetch(OPENROUTER_URL, {
+    headers: { Authorization: env.OPENROUTER_KEY }
   });
   const data = await res.json();
-  const text = data.choices[0].message.content;
-  return {
-    short: text.split('\n')[0],
-    long: text
-  };
-}
+  return data?.data || [];
+};
 
+/* ---------- Senkronizasyon ------------------------------------------- */
 async function syncModels(env) {
-  // 1) Eski JSON'u oku
-  const oldJson = (await MODELS_JSON.get('list', 'json')) || { models: [] };
-  // 2) Yeni listeleri çek
-  const remote = await fetchRemoteModels(env);
-  // 3) Diff & Açıklama üret
-  const enhanced = await Promise.all(
-    remote.map(async m => {
-      const existing = oldJson.models.find(o => o.id === m.id);
-      const desc = existing
-        ? { short: existing.shortDescription, long: existing.description }
-        : await genDescription(m.id, env);
-      return {
-        id: m.id,
-        title: m.title,
-        category: categorize(m.id),
-        image: `https://vertexishere.com/assets/models/${m.id.split('/')[0]}.png`,
-        shortDescription: desc.short,
-        description: desc.long
-      };
-    })
+  const models   = await fetchRemoteModels(env);
+  const grouped  = {};                               // { ChatGPT:{ '4o-mini':{…} } }
+
+  for (const m of models) {
+    if (priceTotal(m.pricing) > COST_LIMIT) continue; // pahalı → atla
+
+    const series  = seriesName(m.name);
+    const variant = variantName(m.name);
+
+    if (!grouped[series]) grouped[series] = {};
+
+    grouped[series][variant] = {
+      id:          m.id,
+      title:       m.name,
+      description: m.description || '',
+      context:     m.context_length,
+      modality:    modality(m.pricing),
+      reasoning:   +m.pricing.internal_reasoning > 0,
+      webSearch:   +m.pricing.web_search        > 0
+    };
+  }
+
+  await MODELS_JSON.put(
+    'list',
+    JSON.stringify({ version: new Date().toISOString(), series: grouped })
   );
-  // 4) Versiyon ekle ve KV'ye yaz
-  const payload = { version: new Date().toISOString(), models: enhanced };
-  await MODELS_JSON.put('list', JSON.stringify(payload));
 }
 
+/* ---------- Worker Olayları ------------------------------------------ */
 export default {
   async scheduled(event, env) {
-    event.waitUntil(syncModels(env));
+    event.waitUntil(syncModels(env));      // cron tetikleyici (wrangler.toml’daki 0 * * * *)
   },
+
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === '/models.json') {

@@ -1,11 +1,10 @@
-name = "cortex-models"
+name = "syncer"
 main = "index.js"
 compatibility_date = "2025-05-18"
-type = "javascript"
 
 [triggers]
-crons = ["0 * * * *"]  # Her saat başı
+crons = ["0 * * * *"] 
 
 [[kv_namespaces]]
 binding = "MODELS_JSON"
-id = "<KV_NAMESPACE_ID>"
+id = "d0da5b35794c4ac093710e7c9370ad71"
