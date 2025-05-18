@@ -16,7 +16,6 @@ function categorize(modelId) {
   if (modelId.startsWith('google/')) return 'Gemini';
   if (modelId.startsWith('openai/')) return 'ChatGPT';
   if (modelId.startsWith('anthropic/')) return 'Anthropic';
-  // Diğer prefix'ler...
   return 'Other';
 }
 

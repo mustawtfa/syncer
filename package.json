@@ -1,5 +1,5 @@
 {
-  "name": "cortex-models",
+  "name": "syncer",
   "version": "1.0.0",
   "scripts": {
     "deploy": "wrangler publish"
