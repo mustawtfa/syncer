@@ -1,0 +1,11 @@
+name = "cortex-models"
+main = "index.js"
+compatibility_date = "2025-05-18"
+type = "javascript"
+
+[triggers]
+crons = ["0 * * * *"]  # Her saat başı
+
+[[kv_namespaces]]
+binding = "MODELS_JSON"
+id = "<KV_NAMESPACE_ID>"
